@@ -1,0 +1,11 @@
+{
+    "assets":[
+       {
+            "name": "reddit_comments",
+            "category":"dataset",
+            "namespace":"airtable",
+            "group":"airtable_devs",
+            "permission": "READ"
+       }
+    ]
+ }
