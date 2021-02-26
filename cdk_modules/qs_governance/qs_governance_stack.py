@@ -155,22 +155,6 @@ class QSGovernanceStack(core.Stack):
             managed_policies=[list_roles_policy],
         )
 
-        # -------------------------------
-        # Lambda Layers
-        # -------------------------------
-
-        path_src = os.path.join(cf.PATH_SRC, "")
-
-        sp.call(["make", "bundle"], cwd=path_src)
-
-        utils_layer = _lambda.LayerVersion(
-            self,
-            f"{cf.PROJECT}-utils-layer",
-            code=_lambda.Code.from_asset(
-                os.path.join(path_src, "ASTDEPythonUtils_layer.zip")
-            ),
-        )
-
         # awswrangler_layer = _lambda.LayerVersion(
         #     self,
         #     f"{cf.PROJECT}-awswrangler-layer",
@@ -243,8 +227,7 @@ class QSGovernanceStack(core.Stack):
                 "QS_USER_GOVERNANCE_KEY": cf.QS_USER_GOVERNANCE_KEY,
             },
             memory_size=256,
-            timeout=core.Duration.seconds(180),
-            layers=[utils_layer],
+            timeout=core.Duration.seconds(180)
         )
 
         # Lamda Okta to QuickSight Mappers
@@ -263,8 +246,7 @@ class QSGovernanceStack(core.Stack):
                 "QS_USER_GOVERNANCE_KEY": cf.QS_USER_GOVERNANCE_KEY,
             },
             memory_size=256,
-            timeout=core.Duration.seconds(180),
-            layers=[utils_layer],
+            timeout=core.Duration.seconds(180)
         )
 
         qs_asset_governance_lambda = _lambda.Function(
@@ -280,8 +262,7 @@ class QSGovernanceStack(core.Stack):
                 "QS_ASSET_GOVERNANCE_KEY": cf.QS_ASSET_GOVERNANCE_KEY,
             },
             memory_size=256,
-            timeout=core.Duration.seconds(180),
-            layers=[utils_layer],
+            timeout=core.Duration.seconds(180)
         )
 
         # -------------------------------
