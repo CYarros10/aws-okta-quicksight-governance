@@ -4,11 +4,21 @@ import os
 ###################################
 # Per Account/App Setup (Edit as Needed)
 ###################################
-ACCOUNT = "012345678901"
-OKTA_SECRET = "okta_info"
+ACCOUNT = "736341770597"
 REGION = "us-east-1"
-OKTA_IDP_NAME = "Okta"
 CDK_ENV = {"account": ACCOUNT, "region": REGION}
+
+###################################
+# Project Specific Setup
+###################################
+PROJECT = "QSGovernance"
+OKTA_SECRET = "okta_info"
+OKTA_IDP_NAME = "Okta"
+OKTA_ROLE_NAME = "FederatedQuickSightRole"
+OKTA_GROUP_QS_PREFIX = "qs_"
+QS_ADMIN_OKTA_GROUP = "qs_role_admin"
+QS_AUTHOR_OKTA_GROUP = "qs_role_author"
+QS_READER_OKTA_GROUP = "qs_role_reader"
 
 ###################################
 # Manifest Data
@@ -22,9 +32,3 @@ QS_ASSET_GOVERNANCE_KEY = "qs-asset-governance.json"
 PATH_CDK = os.path.dirname(os.path.abspath(__file__))
 PATH_ROOT = os.path.dirname(PATH_CDK)
 PATH_SRC = os.path.join(PATH_ROOT, 'src')
-
-###################################
-# Project Specific Setup
-###################################
-PROJECT = "QSGovernance"
-OKTA_ROLE_NAME = "FederatedQuickSightRole"

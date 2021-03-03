@@ -6,13 +6,12 @@ to S3
 import os
 import traceback
 import json
+import logging
 import boto3
 import urllib3
-from ast_de_python_utils.log_utils import setup_logger
 
-
-# Logging
-LOGGER = setup_logger()
+LOGGER = logging.getLogger()
+LOGGER.setLevel(logging.INFO)
 
 FAILURE_RESPONSE = {
     'statusCode': 400,
@@ -41,7 +40,7 @@ response = SECRETS_CLIENT.get_secret_value(SecretId=OKTA_SECRET)
 OKTA_ACCT_ID = json.loads(response['SecretString'])['okta-account-id-secret']
 OKTA_APP_ID = json.loads(response['SecretString'])['okta-app-id-secret']
 OKTA_APP_TOKEN = json.loads(response['SecretString'])['okta-app-token-secret']
-OKTA_URL = f"https://{OKTA_ACCT_ID}.okta.com/api/v1/apps/{OKTA_APP_ID}/users"
+OKTA_URL = f"https://{OKTA_ACCT_ID}.okta.com/api/v1"
 OKTA_AUTH = f"SSWS {OKTA_APP_TOKEN}"
 
 
@@ -70,14 +69,33 @@ def get_users():
     Use urllib3 to make a REST call to get list of Okta
     Users for a given Okta Application
     """
+    request_url = f"{OKTA_URL}/apps/{OKTA_APP_ID}/users"
     okta_users_request = HTTP.request(
         'GET',
-        OKTA_URL,
+        request_url,
         headers={'Content-Type': 'application/json', 'Authorization': OKTA_AUTH},
         retries=False,
     )
-    LOGGER.info(f"Retrieved Okta Users Information from {OKTA_URL}")
-    return json.loads(okta_users_request.data.decode('utf-8'))
+    LOGGER.info(f"Retrieved Okta Users Information from {request_url}")
+    users = json.loads(okta_users_request.data.decode('utf-8'))
+    return users
+
+
+def get_users_groups(okta_user_id):
+    """
+    Use urllib3 to make a REST call to get list of Okta
+    Users Groups Memberships from a specific okta user id
+    """
+    request_url = f"{OKTA_URL}/users/{okta_user_id}/groups"
+    group_memberships_request = HTTP.request(
+        'GET',
+        request_url,
+        headers={'Content-Type': 'application/json', 'Authorization': OKTA_AUTH},
+        retries=False,
+    )
+    LOGGER.info(f"Retrieved Okta Users Groups Memberships from {request_url}")
+    group_memberships = json.loads(group_memberships_request.data.decode('utf-8'))
+    return group_memberships
 
 
 def build_user_governance_manifest(users):
@@ -85,28 +103,21 @@ def build_user_governance_manifest(users):
     Build QuickSight Users manifest from the HTTP Request json
     """
     user_manifest = {"users": []}
-
     for usr in users:
-        profile = usr['profile'].keys()
-        creds = usr['credentials'].keys()
+        groups = []
+        group_memberships = get_users_groups(usr['id'])
+        for grp in group_memberships:
+            groups.append(grp['profile']['name'])
 
-        # only add fully specd users
-        if (
-                'userName' in creds
-                and 'department' in profile
-                and 'userType' in profile
-                and 'email' in profile
-                and 'organization' in profile
-        ):
-            user_manifest['users'].append(
-                {
-                    "username": usr['credentials']['userName'],
-                    "namespace": usr['profile']['organization'],
-                    "groups": usr['profile']['department'],
-                    "role": usr['profile']['userType'],
-                    "email": usr['profile']['email'],
-                }
-            )
+        user_manifest['users'].append(
+            {
+                "username": usr['credentials']['userName'],
+                "email": usr['credentials']['userName'],
+                "groups": groups,
+            }
+        )
+
+    LOGGER.info(user_manifest)
     return user_manifest
 
 

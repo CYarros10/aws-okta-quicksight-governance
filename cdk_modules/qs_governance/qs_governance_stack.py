@@ -82,31 +82,7 @@ class QSGovernanceStack(core.Stack):
                             "saml:aud": "https://signin.aws.amazon.com/saml"
                         }
                     },
-                ),
-                iam.PolicyStatement(
-                    effect=iam.Effect.ALLOW,
-                    resources=[
-                        f"arn:aws:quicksight::{cf.ACCOUNT}:user/$" + "{aws:userid}"
-                    ],
-                    actions=["quicksight:CreateReader"],
-                    conditions={"StringLike": {"aws:PrincipalTag/userType": "READER"}},
-                ),
-                iam.PolicyStatement(
-                    effect=iam.Effect.ALLOW,
-                    resources=[
-                        f"arn:aws:quicksight::{cf.ACCOUNT}:user/$" + "{aws:userid}"
-                    ],
-                    actions=["quicksight:CreateUser"],
-                    conditions={"StringLike": {"aws:PrincipalTag/userType": "AUTHOR"}},
-                ),
-                iam.PolicyStatement(
-                    effect=iam.Effect.ALLOW,
-                    resources=[
-                        f"arn:aws:quicksight::{cf.ACCOUNT}:user/$" + "{aws:userid}"
-                    ],
-                    actions=["quicksight:CreateAdmin"],
-                    conditions={"StringLike": {"aws:PrincipalTag/userType": "ADMIN"}},
-                ),
+                )
             ],
         )
 
@@ -114,8 +90,7 @@ class QSGovernanceStack(core.Stack):
             federated=f"arn:aws:iam::{cf.ACCOUNT}:saml-provider/{cf.OKTA_IDP_NAME}",
             assume_role_action="sts:AssumeRoleWithSAML",
             conditions={
-                "StringEquals": {"SAML:aud": "https://signin.aws.amazon.com/saml"},
-                "StringLike": {"aws:RequestTag/userType": "*"},
+                "StringEquals": {"SAML:aud": "https://signin.aws.amazon.com/saml"}
             },
         )
 
@@ -128,25 +103,6 @@ class QSGovernanceStack(core.Stack):
             managed_policies=[federated_quicksight_policy],
         )
 
-        federated_quicksight_role.assume_role_policy.add_statements(
-            iam.PolicyStatement(
-                effect=iam.Effect.ALLOW,
-                principals=[okta_federated_principal],
-                actions=["sts:TagSession"],
-                conditions={
-                    "StringEquals": {
-                        "aws:RequestTag/userType": ["READER", "AUTHOR", "ADMIN"]
-                    },
-                    "ForAllValues:StringEquals": {
-                        "sts:TransitiveTagKeys": [
-                            "userType",
-                            "organization",
-                            "department",
-                        ]
-                    },
-                },
-            )
-        )
 
         iam.User(
             self,
@@ -155,31 +111,6 @@ class QSGovernanceStack(core.Stack):
             managed_policies=[list_roles_policy],
         )
 
-        # -------------------------------
-        # Lambda Layers
-        # -------------------------------
-
-        path_src = os.path.join(cf.PATH_SRC, "")
-
-        sp.call(["make", "bundle"], cwd=path_src)
-
-        utils_layer = _lambda.LayerVersion(
-            self,
-            f"{cf.PROJECT}-utils-layer",
-            code=_lambda.Code.from_asset(
-                os.path.join(path_src, "ASTDEPythonUtils_layer.zip")
-            ),
-        )
-
-        # awswrangler_layer = _lambda.LayerVersion(
-        #     self,
-        #     f"{cf.PROJECT}-awswrangler-layer",
-        #     code=_lambda.Code.from_asset(
-        #         os.path.join(path_src, "awswrangler-layer-2.4.0-py3.8.zip")
-        #     )
-        # )
-
-        sp.call(["make", "clean"], cwd=path_src)
 
         # -------------------------------
         # Lambda Functions
@@ -244,7 +175,6 @@ class QSGovernanceStack(core.Stack):
             },
             memory_size=256,
             timeout=core.Duration.seconds(180),
-            layers=[utils_layer],
         )
 
         # Lamda Okta to QuickSight Mappers
@@ -261,10 +191,13 @@ class QSGovernanceStack(core.Stack):
                 "OKTA_ROLE_NAME": f"{cf.PROJECT}-{cf.OKTA_ROLE_NAME}",
                 "QS_GOVERNANCE_BUCKET": bucket_name,
                 "QS_USER_GOVERNANCE_KEY": cf.QS_USER_GOVERNANCE_KEY,
+                "OKTA_GROUP_QS_PREFIX": cf.OKTA_GROUP_QS_PREFIX,
+                "QS_ADMIN_OKTA_GROUP": cf.QS_ADMIN_OKTA_GROUP,
+                "QS_AUTHOR_OKTA_GROUP": cf.QS_AUTHOR_OKTA_GROUP,
+                "QS_READER_OKTA_GROUP": cf.QS_READER_OKTA_GROUP
             },
             memory_size=256,
             timeout=core.Duration.seconds(180),
-            layers=[utils_layer],
         )
 
         qs_asset_governance_lambda = _lambda.Function(
@@ -281,7 +214,6 @@ class QSGovernanceStack(core.Stack):
             },
             memory_size=256,
             timeout=core.Duration.seconds(180),
-            layers=[utils_layer],
         )
 
         # -------------------------------

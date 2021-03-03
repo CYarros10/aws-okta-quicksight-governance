@@ -10,23 +10,27 @@ Set up everything permission-related for QuickSight:
 Sample User Governance Manifest File:
 
 {
-    "users":[
-       {
-          "usersname":"aauthor@gmail.com",
-          "namespace":"airtable",
-          "groups":"airtable_devs",
-          "role":"AUTHOR",
-          "email":"aauthor@gmail.com"
-       },
-       {
-          "usersname":"pfreader@gmail.com",
-          "namespace":"biz-eng",
-          "groups":"biz-eng-readers,biz-eng-devs",
-          "role":"READER",
-          "email":"pfreader@gmail.com"
-       }
-    ]
- }
+   "users":[
+      {
+         "username":"qs4@exampletest.com",
+         "email":"qs4@exampletest.com",
+         "groups":[
+            "Everyone",
+            "qs_role_author",
+            "aws_012345678901_QSGovernance-FederatedQuickSightRole"
+         ]
+      },
+      {
+         "username":"qs1@exampletest.com",
+         "email":"qs1@exampletest.com",
+         "groups":[
+            "Everyone",
+            "qs_role_admin",
+            "aws_012345678901_QSGovernance-FederatedQuickSightRole"
+         ]
+      }
+   ]
+}
 
 """
 
@@ -34,13 +38,13 @@ import os
 import traceback
 import time
 import json
+import logging
 from dataclasses import dataclass, field
 import boto3
 from botocore.exceptions import ClientError
-from ast_de_python_utils.log_utils import setup_logger
 
-# Logging
-LOGGER = setup_logger()
+LOGGER = logging.getLogger()
+LOGGER.setLevel(logging.INFO)
 
 FAILURE_RESPONSE = {
     'statusCode': 400,
@@ -60,6 +64,10 @@ S3_CLIENT = boto3.client('s3')
 OKTA_ROLE_NAME = os.environ['OKTA_ROLE_NAME']
 BUCKET = os.environ['QS_GOVERNANCE_BUCKET']
 KEY = os.environ['QS_USER_GOVERNANCE_KEY']
+QS_PREFIX = os.environ['OKTA_GROUP_QS_PREFIX']
+QS_ADMIN_OKTA_GROUP = os.environ['QS_ADMIN_OKTA_GROUP']
+QS_AUTHOR_OKTA_GROUP = os.environ['QS_AUTHOR_OKTA_GROUP']
+QS_READER_OKTA_GROUP = os.environ['QS_READER_OKTA_GROUP']
 
 
 @dataclass
@@ -68,18 +76,28 @@ class OktaUser:
     Quicksight User data class. Holds information regarding an Okta User mapped
     to a QuickSight User and its permission assignments
     """
+
     username: str
-    namespace: str
-    groups: str
-    role: str
     email: str
+    groups: []
     account_id: str
+    namespace: str
     qs_username: str = field(init=False)
     qs_groups: [str] = field(init=False)
+    qs_role: str = field(init=False)
 
     def __post_init__(self):
         self.qs_username = f"{OKTA_ROLE_NAME}/{self.username}"
-        self.qs_groups = self.groups.split(",") if self.groups else []
+        self.qs_groups = [grp for grp in self.groups if grp.startswith(QS_PREFIX)]
+
+        if QS_ADMIN_OKTA_GROUP in self.qs_groups:
+            self.qs_role = "ADMIN"
+        elif QS_AUTHOR_OKTA_GROUP in self.qs_groups:
+            self.qs_role = "AUTHOR"
+        elif QS_READER_OKTA_GROUP in self.qs_groups:
+            self.qs_role = "READER"
+        else:
+            self.qs_role = ""
 
 
 def handler(event, context):
@@ -96,6 +114,7 @@ def handler(event, context):
     try:
         for user in manifest:
             apply_user_governance(user)
+        return SUCCESS_RESPONSE
     except Exception as err:
         LOGGER.error(traceback.format_exc())
         raise Exception(FAILURE_RESPONSE) from err
@@ -112,8 +131,9 @@ def get_user_manifest(account_id):
         users = json_data["users"]
         for user in users:
             user['account_id'] = account_id
+            user['namespace'] = "default"
     except ClientError as err:
-        LOGGER.info(str(err))
+        LOGGER.info(f"Could not retrieve manifest file. Error: {str(err)}")
     return [OktaUser(**user) for user in users]
 
 
@@ -128,7 +148,6 @@ def apply_user_governance(user):
         - if the user's group doesnt exist, create it
         - assign user to its groups
     """
-    LOGGER.info(f"Governing [{user.qs_username}]...")
 
     create_if_not_exists_namespace(user)
 
@@ -169,16 +188,17 @@ def register_if_not_exists_user(user):
             Namespace=user.namespace,
         )
     except ClientError:
-        QS_CLIENT.register_user(
-            IdentityType='IAM',
-            Email=user.email,
-            UserRole=user.role,
-            IamArn=f'arn:aws:iam::{user.account_id}:role/{OKTA_ROLE_NAME}',
-            SessionName=user.email,
-            AwsAccountId=user.account_id,
-            Namespace=user.namespace,
-        )
-        LOGGER.info(f"[{user.qs_username}] added to Namespace [{user.namespace}].")
+        if user.qs_role:
+            QS_CLIENT.register_user(
+                IdentityType='IAM',
+                Email=user.email,
+                UserRole=user.qs_role,
+                IamArn=f'arn:aws:iam::{user.account_id}:role/{OKTA_ROLE_NAME}',
+                SessionName=user.email,
+                AwsAccountId=user.account_id,
+                Namespace=user.namespace,
+            )
+            LOGGER.info(f"[{user.qs_username}] added to Namespace [{user.namespace}].")
 
 
 def delete_user(user):
@@ -206,10 +226,10 @@ def update_role(user):
             UserName=user.qs_username,
             AwsAccountId=user.account_id,
             Namespace=user.namespace,
-            Role=user.role,
+            Role=user.qs_role,
             Email=user.email,
         )
-        LOGGER.info(f"[{user.qs_username}] role set to: {user.role}")
+        LOGGER.info(f"[{user.qs_username}] role set to: {user.qs_role}")
         updated = True
     except ClientError as err:
         if (
@@ -224,7 +244,8 @@ def update_role(user):
 def create_if_not_exists_groups(user):
     """
     check to see if a group exists in a QuickSight namespace.
-    If not, create it.
+    If not, create it. (only create if prefixed appropriately)
+    ex. dlp_qs_dev_
     """
 
     for grp in user.qs_groups:
@@ -233,9 +254,11 @@ def create_if_not_exists_groups(user):
                 GroupName=grp, AwsAccountId=user.account_id, Namespace=user.namespace
             )
         except ClientError:
+
             QS_CLIENT.create_group(
                 GroupName=grp, AwsAccountId=user.account_id, Namespace=user.namespace
             )
+            time.sleep(3) # let group be created
             LOGGER.info(f"Group [{grp}] added to namespace [{user.namespace}]")
 
 

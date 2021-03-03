@@ -7,23 +7,28 @@ Apply QuickSight Group/DataSet Permissions:
 Sample Asset Governance Manifest File:
 
 {
-    "assets":[
-       {
-            "name": "airtable_table",
-            "category":"dataset",
-            "namespace":"airtable",
-            "group":"airtable-devs",
-            "permission": "READ"
-       },
-       {
-            "name": "bizeng_table",
-            "category":"dataset",
-            "namespace":"biz-eng",
-            "group":"biz-eng-devs",
-            "permission": "READ"
-       }
-    ]
- }
+   "assets":[
+      {
+         "name": "dataset_example_1",
+         "category":"dataset",
+         "namespace":"default",
+         "groups": [
+            "qs_group_ops",
+            "qs_group_finance"
+         ],
+         "permission": "READ"
+      },
+      {
+         "name": "dataset_example_2",
+         "category":"dataset",
+         "namespace":"default",
+         "groups": [
+            "qs_group_hr"
+         ],
+         "permission": "READ"
+      }
+   ]
+}
 
 
 """
@@ -31,13 +36,13 @@ Sample Asset Governance Manifest File:
 import os
 import traceback
 import json
+import logging
 from dataclasses import dataclass
 import boto3
 from botocore.exceptions import ClientError
-from ast_de_python_utils.log_utils import setup_logger
 
-# Logging
-LOGGER = setup_logger()
+LOGGER = logging.getLogger()
+LOGGER.setLevel(logging.INFO)
 
 FAILURE_RESPONSE = {
     'statusCode': 400,
@@ -67,16 +72,18 @@ READ_ACTIONS = [
     "quicksight:ListIngestions",
 ]
 
+
 @dataclass
 class QuickSightAsset:
     """
     Quicksight Asset data class. Holds information regarding a QuickSight asset
     and its permission assignments
     """
+
     name: str
     category: str
     namespace: str
-    group: str
+    groups: [str]
     permission: str
     account_id: str
 
@@ -92,13 +99,14 @@ def handler(event, context):
     LOGGER.info(f"event: {event}")
 
     account_id = context.invoked_function_arn.split(":")[4]
-    all_datasets = QS_CLIENT.list_data_sets(AwsAccountId=account_id)['DataSetSummaries']
+    all_datasets = get_all_datasets(account_id)
     manifest = get_asset_manifest(account_id)
 
     try:
         for asset in manifest:
             if asset.category == "dataset":
                 dataset_id = get_dataset_id(asset, all_datasets)
+                reset_dataset_permissions(asset, dataset_id)
                 apply_dataset_governance(asset, dataset_id)
             # elif asset.category == "dashboard":
             #     # Dashboard Asset Governance
@@ -116,6 +124,24 @@ def handler(event, context):
         raise Exception(FAILURE_RESPONSE) from err
 
 
+def get_all_datasets(account_id):
+    """
+    Paginate through all list_data_sets responses and build a list of every
+    dataset in the QuickSight account.
+    """
+    all_datasets = []
+    response = QS_CLIENT.list_data_sets(AwsAccountId=account_id)
+    for dset in response['DataSetSummaries']:
+        all_datasets.append(dset)
+    while response.get("NextToken", None) is not None:
+        response = QS_CLIENT.list_data_sets(
+            AwsAccountId=account_id, NextToken=response.get("NextToken")
+        )
+        for dset in response['DataSetSummaries']:
+            all_datasets.append(dset)
+    return all_datasets
+
+
 def get_asset_manifest(account_id):
     """
     Retrieve manifest file and generate list of asset objects
@@ -128,41 +154,82 @@ def get_asset_manifest(account_id):
         for asset in assets:
             asset['account_id'] = account_id
     except ClientError as err:
-        LOGGER.info(str(err))
+        LOGGER.info(f"Could not retrieve manifest file. Error: {str(err)}")
     return [QuickSightAsset(**asset) for asset in assets]
 
 
 def apply_dataset_governance(asset, dataset_id):
     """
-    Use governed asset information to update the permissions
-    of a QuickSight Dataset.
+    Use governed asset information to update the permissions of a QuickSight
+    Dataset. Give permissions to all groups in that asset entry.
     """
-
 
     actions = ''
     if asset.permission == "READ":
         actions = READ_ACTIONS
 
-    principal = (
-        f"arn:aws:quicksight:{REGION}:{asset.account_id}:group/"
-        f"{asset.namespace}/{asset.group}"
-    )
+    for group in asset.groups:
+        principal = (
+            f"arn:aws:quicksight:{REGION}:{asset.account_id}:group/" f"{asset.namespace}/{group}"
+        )
 
-    QS_CLIENT.update_data_set_permissions(
-        AwsAccountId=asset.account_id,
-        DataSetId=dataset_id,
-        GrantPermissions=[
-            {'Principal': principal, 'Actions': actions},
-        ],
-    )
-    msg = (
-        f"Dataset [{asset.name}] permissions given to group [{asset.group}] in "
-        f"namespace [{asset.namespace}]"
-    )
-    LOGGER.info(msg)
+        try:
+            QS_CLIENT.update_data_set_permissions(
+                AwsAccountId=asset.account_id,
+                DataSetId=dataset_id,
+                GrantPermissions=[
+                    {'Principal': principal, 'Actions': actions},
+                ],
+            )
+
+            LOGGER.info(
+                f"Dataset [{asset.name}] permissions given to group [{group}] in "
+                f"namespace [{asset.namespace}]"
+            )
+        except ClientError as err:
+            if err.response['Error']['Code'] == 'InvalidParameterValueException':
+                LOGGER.info(
+                    "Failed to apply permissions. Please validate that "
+                    f"[{asset.category}] [{asset.name}], namespace "
+                    f"[{asset.namespace}], and group [{group}] all exist in "
+                    "QuickSight."
+                )
 
 
-def get_dataset_id(asset : QuickSightAsset, all_datasets : dict):
+def reset_dataset_permissions(asset, dataset_id):
+    """
+    Revoke all permissions assigned to a specific dataset.
+    """
+
+    response = QS_CLIENT.describe_data_set_permissions(
+        AwsAccountId=asset.account_id, DataSetId=dataset_id
+    )
+    permissions = response['Permissions']
+
+    for permission in permissions:
+        principal = permission['Principal']
+        actions = permission['Actions']
+        if "group" in principal:
+            try:
+                QS_CLIENT.update_data_set_permissions(
+                    AwsAccountId=asset.account_id,
+                    DataSetId=dataset_id,
+                    RevokePermissions=[
+                        {'Principal': principal, 'Actions': actions},
+                    ],
+                )
+            except ClientError as err:
+                if err.response['Error']['Code'] == 'InvalidParameterValueException':
+                    LOGGER.info(
+                        "Failed to apply permissions. Please validate that "
+                        f"[{asset.category}] [{asset.name}], namespace "
+                        f"[{asset.namespace}], and principal [{principal}] all exist in "
+                        "QuickSight."
+                    )
+    LOGGER.info(f"Permissions reset for [{asset.category}] [{asset.name}]")
+
+
+def get_dataset_id(asset: QuickSightAsset, all_datasets: dict):
     """
     Get the DataSetID based on a DataSet Name
     """
