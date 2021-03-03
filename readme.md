@@ -14,13 +14,15 @@
 
 ### 4. Usage
 
-### 5. Extended Learning
+### 5. Conclusion
+
+### 6. Extended Learning
 
 ---
 
 ## 1. About
 
-The Goal: QuickSight permissions are controlled entirely by Okta groups. QuickSight implements multi-tenancy. User/Asset governance is centralized and automated to prevent administrators from manually creating everything in the console or command-line.
+The Goal: QuickSight permissions are controlled entirely by Okta groups. User/Asset governance is centralized and automated to prevent administrators from manually creating everything in the console or command-line.
 
 The Solution: Utilize Okta API and AWS Lambda to routinely pull group information from Okta and store relevant information in a user-manifest file.  Allow Administrators to create and manage a single asset-manifest file.  QuickSight Namespaces, Groups, Users and Asset permissions are managed entirely via these two manifest files.
 
@@ -108,6 +110,16 @@ To create an access key for Okta, follow these steps.
 
 ### g. Configure the Okta application
 
+#### [Okta Console] Create Role Group and add Okta Users that will access QuickSight
+
+- Create Group in okta that looks like this:
+
+`aws_[account_id]_[FederatedRole]`
+
+ex:  `aws_012345678901_QSGovernance-FederatedQuickSightRole`
+
+- Add all of your quicksight users to this role.
+
 #### [Okta Console] Update IDP Arn
 
 - For Identity Provider ARN (Required only for SAML SSO), provide the ARN (for example, arn:aws:iam::<YOUR ACCOUNT ID>:saml-provider/Okta) of the IdP that you created in previous steps.
@@ -121,31 +133,22 @@ To create an access key for Okta, follow these steps.
 - For Access Key and Secret Key, provide the access key and secret key that you downloaded in previous steps.
 - Choose Test API Credentials, Save.
 
-#### [Okta Console] Create Role Group and add Okta Users that will access QuickSight
-
-- Create Group in okta that looks like this:
-
-aws_[account_id]_[FederatedRole]
-
-ex: aws_012345678901_QSGovernance-FederatedQuickSightRole
-
-- Add all of your quicksight users to this role.
-
 #### [Okta Console] Update Group Mapping
 
 - From Applications Dashboard, choose Sign On.
 - Select Edit
 - Set the following values:
 
-Group Filter: aws_(?{{accountid}}\d+)_(?{{role}}[a-zA-Z0-9+=,.@\-_]+)
-Role Value Pattern: arn:aws:iam::${accountid}:saml-provider/Okta,arn:aws:iam::${accountid}:role/${role}
+Group Filter: `aws_(?{{accountid}}\d+)_(?{{role}}[a-zA-Z0-9+=,.@\-_]+)`
+
+Role Value Pattern: `arn:aws:iam::${accountid}:saml-provider/Okta,arn:aws:iam::${accountid}:role/${role}`
 
 - Select **Use Group Mapping**
 
 #### [Okta Console] Assign Groups to App
 
 - Choose Assignments, Assign and then select the groups to which to grant federated access.
-- Ensure to selct the Role Group. i.e. aws_[account_id]_[FederatedRole] that you created in the previous step.
+- Ensure to selct the Role Group. i.e. `aws_[account_id]_[FederatedRole]` that you created in the previous step.
 - Choose Save and Go Back, Done.
 
 ## 4. Usage
@@ -217,6 +220,8 @@ As for Asset Governance, an Administrator will need to upload a JSON file to the
 ## Conclusion
 
 Now, each of your Okta Users will have a QuickSight Role and Data Set Permissions automatically granted to them based on their Okta Groups. QuickSight User Governance will now be handled via Okta.  QuickSight Asset Governance will be automatically handled via Asset Manifest File Upload to S3. This prevents you from the hassle of managing quicksight users, groups, and assets individually and manually.
+
+When Okta User launches QuickSight App from Okta portal, it will already have a QuickSight user created, user role, and permissions provided to your specified assets.
 
 ---
 
